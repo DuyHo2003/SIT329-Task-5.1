@@ -39,27 +39,27 @@ void led_init(void) {
 
 // ----------------- Button Init -----------------
 void button_init(void){
-    // Set inputs with pull-ups
+    // Set inputs with pull-downs
     PORT->Group[0].DIRCLR.reg = (1<<BUTTON1)|(1<<BUTTON2);
     PORT->Group[0].PINCFG[BUTTON1].bit.INEN = 1;
     PORT->Group[0].PINCFG[BUTTON1].bit.PULLEN = 1;
     PORT->Group[0].PINCFG[BUTTON2].bit.INEN = 1;
     PORT->Group[0].PINCFG[BUTTON2].bit.PULLEN = 1;
-    PORT->Group[0].OUTSET.reg = (1<<BUTTON1)|(1<<BUTTON2);
+    PORT->Group[0].OUTCLR.reg = (1<<BUTTON1)|(1<<BUTTON2); // pull-down
 
     // EIC mapping
     PORT->Group[0].PINCFG[BUTTON1].bit.PMUXEN = 1;
-    PORT->Group[0].PMUX[BUTTON1>>1].bit.PMUXE = MUX_PA06A_EIC_EXTINT6;
     PORT->Group[0].PINCFG[BUTTON2].bit.PMUXEN = 1;
-    PORT->Group[0].PMUX[BUTTON2>>1].bit.PMUXE = MUX_PA07A_EIC_EXTINT7;
+    PORT->Group[0].PMUX[BUTTON1>>1].reg = (MUX_PA06A_EIC_EXTINT6 << 0) | (MUX_PA07A_EIC_EXTINT7 << 4);
 
     PM->APBAMASK.reg |= PM_APBAMASK_EIC;
     GCLK->CLKCTRL.reg = GCLK_CLKCTRL_ID_EIC | GCLK_CLKCTRL_GEN_GCLK0 | GCLK_CLKCTRL_CLKEN;
     while(GCLK->STATUS.bit.SYNCBUSY);
 
+    // Configure EIC for rising edge (pull-down: trigger when pressed)
     EIC->CONFIG[0].reg &= ~(EIC_CONFIG_SENSE6_Msk | EIC_CONFIG_SENSE7_Msk);
-    EIC->CONFIG[0].reg |= (EIC_CONFIG_SENSE6_FALL << 0) |
-                           (EIC_CONFIG_SENSE7_FALL << 4);
+    EIC->CONFIG[0].reg |= (EIC_CONFIG_SENSE6_RISE << 0) |
+                           (EIC_CONFIG_SENSE7_RISE << 4);
 
     EIC->INTENSET.reg = (1<<6)|(1<<7);
     EIC->CTRL.bit.ENABLE = 1;
@@ -70,16 +70,16 @@ void button_init(void){
 
 // ----------------- Button ISR -----------------
 extern "C" void EIC_Handler(void){
-    if((PORT->Group[0].IN.reg & (1<<BUTTON1))==0){
+    if((PORT->Group[0].IN.reg & (1<<BUTTON1))!=0){ // rising edge, pressed
         if(currentState==STOPPED) currentState=RUNNING;
         else if(currentState==RUNNING) currentState=STOPPED;
         else if(currentState==RESET){ counter=0; updateLEDs(counter); currentState=STOPPED; }
     }
-    if((PORT->Group[0].IN.reg & (1<<BUTTON2))==0){
+    if((PORT->Group[0].IN.reg & (1<<BUTTON2))!=0){ // rising edge, pressed
         currentMode=(Mode)((currentMode+1)%3);
         counter=(currentMode==MODE3)?63:0;
     }
-    EIC->INTFLAG.reg = (1<<6)|(1<<7);
+    EIC->INTFLAG.reg |= (1<<6)|(1<<7); // this could avoid you accidentally clearing other flags.
 }
 
 // ----------------- Main -----------------
@@ -89,8 +89,8 @@ int main(void){
     button_init();
     updateLEDs(0);
 
-    TCC0_init(200); // 200ms for Knight Rider
-    TC5_init(500);  // 500ms for Mode2/3 counting
+    TCC0_init(200); // 200ms Knight Rider
+    TC3_init(500);  // Mode2/3 counting
 
     __enable_irq();
 
